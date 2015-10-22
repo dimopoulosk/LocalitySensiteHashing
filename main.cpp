@@ -11,6 +11,7 @@
 #include <sstream>
 #include <iomanip>
 #include <set>
+#include <queue>
 
 using namespace std;
 
@@ -27,10 +28,80 @@ const string superHashTemplatesFile = "superHashTemplates";
 
 typedef unsigned int uint;
 
+////////////////////// Class declarations /////////////////////////
+// TODO
+class Edge {
+  public:
+   uint _docID;
+   double _similarity;
+   // Constructors.
+   Edge() {
+     _similarity = 0.0f;
+     _docID = 0;
+   }
+   Edge(const uint inDocID, const double inSimilarity) {
+     _docID = inDocID;
+     _similarity = inSimilarity;
+   }
+};
+
+class edgeComparator {
+  public:
+    bool operator() (const Edge& a, const Edge& b) const {
+      return (a._similarity > b._similarity);
+    }  
+};
+
+class Node {
+  public:
+   uint _docID;
+   uint _degree;
+
+   // Interface for adding/removing edges in Node.
+   // Smallest similarity edge at the top.
+   priority_queue<Edge, vector<Edge>, edgeComparator> _edgeHeap;  
+
+   // Add edge in the priority queue and update the degree.
+   void addEdge(const Edge& edge, const uint& maxCapacity) {
+     // Note: left-to-right evaluation is guaranteed in &&/||.
+     if (_edgeHeap.size() < maxCapacity || 
+        ((_edgeHeap.size() == maxCapacity) && (edge._similarity > _edgeHeap.top()._similarity))) {
+       _edgeHeap.push(edge); // push edge
+       ++_degree;  // increase degree
+       capacityCheck(maxCapacity); // check priority queue capacity
+     }
+     assert(_degree == _edgeHeap.size());
+   }   
+
+   // Remove smallest similarity edges until size of priority queue is maxCapacity.
+   void capacityCheck(const uint maxCapacity) {
+     if (_edgeHeap.size() > maxCapacity) {
+       while (_edgeHeap.size() > maxCapacity) {
+         _edgeHeap.pop();
+         --_degree;
+       }
+     }
+     assert(_degree == _edgeHeap.size());
+   }
+
+   // Constructor.
+   Node() { 
+     _degree = 0; 
+     _docID = 0;
+   }
+};
+
+class Graph {
+  public: 
+    vector<Node> _nodes;
+    Graph(const uint sz) { _nodes.resize(sz, Node()); }
+};
+
 class minHash {
   public:
    uint _docid;
    vector<unsigned short> _minH;
+   minHash() {};
    minHash(const uint inDocid, vector<unsigned short> inMinH) {
      _docid = inDocid; 
      _minH = inMinH;
@@ -55,6 +126,7 @@ bool superHashComparator (const superHash i, const superHash j) {
   return (i._superHash<j._superHash); 
 }
 
+////////////////////// Method Signatures /////////////////////////
 vector<uint> getPrimesUpTo(const uint max);
 void keepPrimesMoreThan(const uint primeMIN, vector<uint>& primes);
 void randomlySelectKNumbers(const uint k, vector<uint>&primes);
@@ -90,7 +162,9 @@ void printBin(unsigned long i);
 vector<minHash> createMinHashesForKDocs(const uint k, vector<uint>& hashFuncs);
 double computeJaccardSimilarity(minHash* a, minHash* b);
 double computeIntersection(minHash* a, minHash*b );
+void addEdges(vector<superHash>& superHashVec, Graph& sparseGraph); 
 
+////////////////////// Driver /////////////////////////
 int main() {
   srand(time(0));
 /*
@@ -114,54 +188,59 @@ int main() {
   //writeoutSuperHashTemplates(superHashSize, numSuperHashes, numHashFunctions, superHashTemplatesFile);
   vector<vector<unsigned short> > superHashTemplates = loadSuperHashTemplates(superHashTemplatesFile);
 
-  vector<minHash> minHashDS = createMinHashesForKDocs(100000, hashFuncs);
+//  vector<minHash> minHashDS = createMinHashesForKDocs(100000, hashFuncs);
   cout << "###############################" << endl;
   createSparseGraph(minHashDS, superHashTemplates);
 
   return 0;
 }
 
+////////////////////// Methods' implementation /////////////////////////
 
+// TODO(dimopoulos): change method's name.
 void createSparseGraph(vector<minHash>& minHashes, 
                        vector<vector<unsigned short> >& superHashTemplates) {
   assert(superHashTemplates.size() > 0);
   assert(minHashes.size() > 0);
  
-  cout << " Creating a graph representation " << endl;
-  // initialize a graph representation. TODO(dimopoulos)
-//  vector<unsigned short> superHashes(superHashTemplates[0].size(), 0);
+  // Initialize a graph representation.
+  Graph sparseGraph(minHashes.size());
 
   // Foreach super hash template.
   uint numSuperHashes = superHashTemplates.size();
   for (uint i = 0; i < numSuperHashes; ++i) {
     vector<superHash> superHashVec;  // maintain super hashes of this round.
 
-    cout << "befor SH creation" << endl;
     // Foreach doc create the super hash according to the i-th super hash template.
     for (uint docID = 0; docID < minHashes.size(); ++docID) {
       superHashVec.push_back(createSuperHash(minHashes[docID], superHashTemplates[i]));
     }
-    cout << "after sH creation and before sorting" << endl;
     // Sort superHashes by superHash value.
     sort(superHashVec.begin(), superHashVec.end(), superHashComparator);
-    cout << "after sorting" << endl;
 
-    for (uint numDoc = 0; numDoc < superHashVec.size() - 1; ++numDoc) {
+    // Add edges in the graph.
+    addEdges(superHashVec, sparseGraph);
+  }
+  // return sparseGraph;
+}
+
+// TODO(dimopoulos): implementation.
+void addEdges(vector<superHash>& superHashVec, Graph& sparseGraph) {
+  
+
+  for (uint numDoc = 0; numDoc < superHashVec.size() - 1; ++numDoc) {
       if (superHashVec[numDoc]._superHash == superHashVec[numDoc+1]._superHash) {
-        cout << "numDoc: " << numDoc << " with SH: " << superHashVec[numDoc]._superHash 
-             << " == " << superHashVec[numDoc+1]._superHash << " numDoc: " << (numDoc+1) << endl;
+ //       cout << "numDoc: " << numDoc << " with SH: " << superHashVec[numDoc]._superHash 
+ //            << " == " << superHashVec[numDoc+1]._superHash << " numDoc: " << (numDoc+1) << endl;
   
         double score = computeJaccardSimilarity(superHashVec[numDoc]._minH, superHashVec[numDoc+1]._minH);
         if (score > 0.1f) {
-          cout << setprecision(10) << score << endl;
+   //       cout << setprecision(10) << score << endl;
         }
 
 //      break;
       }
     }
-
-    break;
-  }
 }
 
 double computeIntersection(minHash* a, minHash*b ) {
@@ -235,7 +314,6 @@ vector<minHash> createMinHashesForKDocs(const uint k, vector<uint>& hashFuncs) {
   for (uint docID = 0; docID < docs.size(); ++docID) {
     minHashVec.push_back(createMinHashes(docID, docs[docID], hashFuncs));
   }
-
   return minHashVec;
 }
 
