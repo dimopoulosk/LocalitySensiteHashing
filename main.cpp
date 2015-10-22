@@ -29,7 +29,6 @@ const string superHashTemplatesFile = "superHashTemplates";
 typedef unsigned int uint;
 
 ////////////////////// Class declarations /////////////////////////
-// TODO
 class Edge {
   public:
    uint _docID;
@@ -163,6 +162,7 @@ vector<minHash> createMinHashesForKDocs(const uint k, vector<uint>& hashFuncs);
 double computeJaccardSimilarity(minHash* a, minHash* b);
 double computeIntersection(minHash* a, minHash*b );
 void addEdges(vector<superHash>& superHashVec, Graph& sparseGraph); 
+void findRangeWithSameSuperHash(vector<superHash>& superHashVec, uint& start, uint& end);
 
 ////////////////////// Driver /////////////////////////
 int main() {
@@ -188,7 +188,7 @@ int main() {
   //writeoutSuperHashTemplates(superHashSize, numSuperHashes, numHashFunctions, superHashTemplatesFile);
   vector<vector<unsigned short> > superHashTemplates = loadSuperHashTemplates(superHashTemplatesFile);
 
-//  vector<minHash> minHashDS = createMinHashesForKDocs(100000, hashFuncs);
+  vector<minHash> minHashDS = createMinHashesForKDocs(100000, hashFuncs);
   cout << "###############################" << endl;
   createSparseGraph(minHashDS, superHashTemplates);
 
@@ -226,21 +226,34 @@ void createSparseGraph(vector<minHash>& minHashes,
 
 // TODO(dimopoulos): implementation.
 void addEdges(vector<superHash>& superHashVec, Graph& sparseGraph) {
-  
-
-  for (uint numDoc = 0; numDoc < superHashVec.size() - 1; ++numDoc) {
-      if (superHashVec[numDoc]._superHash == superHashVec[numDoc+1]._superHash) {
- //       cout << "numDoc: " << numDoc << " with SH: " << superHashVec[numDoc]._superHash 
- //            << " == " << superHashVec[numDoc+1]._superHash << " numDoc: " << (numDoc+1) << endl;
-  
-        double score = computeJaccardSimilarity(superHashVec[numDoc]._minH, superHashVec[numDoc+1]._minH);
-        if (score > 0.1f) {
-   //       cout << setprecision(10) << score << endl;
-        }
-
-//      break;
-      }
+  uint start = 0;
+  uint end = 1;
+  while (start != end) {
+    // Find docID ranges with same superHashes.
+    findRangeWithSameSuperHash(superHashVec, start, end);
+    uint sz = end - start;
+    if (sz == 0) continue; // range is zero so continue.
+    if (sz <= 1000) { //threshold) {  // compute all pairwise similiarities.
+    } else {  // compute sample of pairwise similaritiies.
     }
+  }
+//        double score = computeJaccardSimilarity(superHashVec[numDoc]._minH, superHashVec[numDoc+1]._minH);
+}
+
+// Given the superHash vector, the current start and end indexes, find the range [start, end],
+// such that all docIDs in range have the same superhash.
+void findRangeWithSameSuperHash(vector<superHash>& superHashVec, uint& start, uint& end) {
+  assert(start <= end);
+  assert(start < superHashVec.size());
+
+  unsigned long curSuperHash = superHashVec[start]._superHash;
+  for (uint i = start + 1; i < superHashVec.size() - 1; ++i) {
+    if (curSuperHash == superHashVec[i+1]._superHash) {
+      end = i;
+    } else {
+      break;
+    }
+  }
 }
 
 double computeIntersection(minHash* a, minHash*b ) {
