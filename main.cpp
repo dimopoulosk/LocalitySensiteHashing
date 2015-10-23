@@ -161,9 +161,12 @@ void printBin(unsigned long i);
 vector<minHash> createMinHashesForKDocs(const uint k, vector<uint>& hashFuncs);
 double computeJaccardSimilarity(minHash* a, minHash* b);
 double computeIntersection(minHash* a, minHash*b );
-void addEdges(vector<superHash>& superHashVec, Graph& sparseGraph); 
-void findRangeWithSameSuperHash(vector<superHash>& superHashVec, uint& start, uint& end);
-
+void addEdges(const vector<superHash> superHashVec, Graph& sparseGraph); 
+void findRangeWithSameSuperHash(const vector<superHash> superHashVec, const uint start, uint& end);
+void addEdgesToSimilarDocs(const vector<superHash> superHashVec,
+                           const uint startIdx,
+                           const uint endIdx,
+                           Graph& sparseGraph);
 ////////////////////// Driver /////////////////////////
 int main() {
   srand(time(0));
@@ -225,35 +228,95 @@ void createSparseGraph(vector<minHash>& minHashes,
 }
 
 // TODO(dimopoulos): implementation.
-void addEdges(vector<superHash>& superHashVec, Graph& sparseGraph) {
-  uint start = 0;
-  uint end = 1;
-  while (start != end) {
+// Assumption: superHash vector of size more than 0.
+void addEdges(const vector<superHash> superHashVec, Graph& sparseGraph) {
+  assert(superHashVec.size() > 0);
+  uint curStartIdx = 0;
+  uint curEndIdx = 0;
+  uint lastIdx = superHashVec.size();
+
+  while (curStartIdx != lastIdx) {
     // Find docID ranges with same superHashes.
-    findRangeWithSameSuperHash(superHashVec, start, end);
-    uint sz = end - start;
-    if (sz == 0) continue; // range is zero so continue.
-    if (sz <= 1000) { //threshold) {  // compute all pairwise similiarities.
-    } else {  // compute sample of pairwise similaritiies.
+    findRangeWithSameSuperHash(superHashVec, curStartIdx, curEndIdx);
+
+    // Add edges to document-nodes with high similarity.
+    addEdgesToSimilarDocs(superHashVec, curStartIdx, curEndIdx, sparseGraph);
+
+    ++curEndIdx;  // next start idx.
+    curStartIdx = curEndIdx;  // set curStartIdx.
+    assert(curEndIdx == curStartIdx);
+  }
+}
+
+// Given the superHashVec, the start and end idx of docs with the same superhash and the 
+// sparsegraph, (i) do nothing if there is only one docid, (ii) compute all pairwise similarity
+// scores if #docsWithSameSuperHash is < pairwiseComputationThreshold, (iii) compute similarity
+// on a sample of docs.
+// TODO(dimopoulos): add to global variables, the pairwiwseComputationThreshold and maxCapacity.
+void addEdgesToSimilarDocs(const vector<superHash> superHashVec,
+                           const uint startIdx,
+                           const uint endIdx,
+                           Graph& sparseGraph) {
+  uint numDocsWithSameSuperHash = endIdx - startIdx;
+  if (numDocsWithSameSuperHash == 0) return;
+cout << "range: " << numDocsWithSameSuperHash << " starid: " << startIdx << " - " << endIdx << endl;
+
+  uint pairwiseComputationThreshold = 100;
+  if (numDocsWithSameSuperHash < pairwiseComputationThreshold) {
+    for (uint i = startIdx; i < endIdx - 1; ++i) { // compute all scores.
+      for (uint j = i + 1; j < endIdx; ++j) {
+        uint sourceDocid = superHashVec[i]._minH->_docid;
+        uint destinationDocid =superHashVec[j]._minH->_docid;
+        double score = computeJaccardSimilarity(superHashVec[i]._minH, superHashVec[j]._minH);
+        Edge edgeSource(sourceDocid, score);
+        Edge edgeDestination(destinationDocid, score);
+        sparseGraph._nodes[sourceDocid].addEdge(edgeSource, 100);
+        sparseGraph._nodes[destinationDocid].addEdge(edgeDestination, 1000);
+      }
+    }  
+  } else {  // compute sample of scores for each node/document.
+    for (uint i = startIdx; i < endIdx - 1; ++i) {
+      uint sourceDocid = superHashVec[i]._minH->_docid;
+      set<uint> selectedNodes;
+  
+      uint numIterations = 0;
+      uint maxIterations = 1000;  // TODO(dimopoulos): move to globals.
+      while (numIterations < maxIterations) {  // 
+        uint randNode = randInRange(startIdx + 1, endIdx);  // select a Node in range.
+        if ((selectedNodes.count(randNode) == 0) && (randNode != i)) {
+          selectedNodes.insert(randNode);
+
+          uint sourceDocid = superHashVec[i]._minH->_docid;
+          uint destinationDocid =superHashVec[randNode]._minH->_docid;
+          double score = computeJaccardSimilarity(superHashVec[i]._minH, superHashVec[randNode]._minH);
+          Edge edgeSource(sourceDocid, score);
+          Edge edgeDestination(destinationDocid, score);
+          sparseGraph._nodes[sourceDocid].addEdge(edgeSource, 100);
+          sparseGraph._nodes[destinationDocid].addEdge(edgeDestination, 1000);
+        }
+        ++numIterations;
+      }
     }
   }
-//        double score = computeJaccardSimilarity(superHashVec[numDoc]._minH, superHashVec[numDoc+1]._minH);
 }
 
 // Given the superHash vector, the current start and end indexes, find the range [start, end],
 // such that all docIDs in range have the same superhash.
-void findRangeWithSameSuperHash(vector<superHash>& superHashVec, uint& start, uint& end) {
-  assert(start <= end);
-  assert(start < superHashVec.size());
+// Assumption: startIdx equal to endIdx (endIdx is updated here), while startIdx is stable.
+void findRangeWithSameSuperHash(const vector<superHash> superHashVec, const uint startIdx, uint& endIdx) {
+  assert(startIdx == endIdx);
+  assert(startIdx < superHashVec.size());
 
-  unsigned long curSuperHash = superHashVec[start]._superHash;
-  for (uint i = start + 1; i < superHashVec.size() - 1; ++i) {
-    if (curSuperHash == superHashVec[i+1]._superHash) {
-      end = i;
+  unsigned long curSuperHash = superHashVec[startIdx]._superHash;
+  for (uint i = startIdx + 1; i < superHashVec.size(); ++i) {
+    if (curSuperHash == superHashVec[i]._superHash) {
+      ++endIdx;
     } else {
       break;
     }
   }
+  // In case, we check the last entry, the endIdx is already set to startIdx.
+  assert(startIdx <= endIdx);
 }
 
 double computeIntersection(minHash* a, minHash*b ) {
