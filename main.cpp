@@ -25,6 +25,10 @@ const uint numMinSH = 2;
 const uint domain = 15773;
 const string hashFunctionsFile = "hashFunctions";
 const string superHashTemplatesFile = "superHashTemplates";
+const uint similarityMeasure = 0; // 0: Jaccard, 1: intersection.
+const uint numThresholds = 2; //6;
+const double thresholds[ 2 ] = { 0.1, 0.05 }; //0.99, 0.95, 0.90, 0.80, 0.65 };
+const uint maxCandidates = 5; //100;
 
 typedef unsigned int uint;
 
@@ -59,6 +63,12 @@ class Node {
    // Interface for adding/removing edges in Node.
    // Smallest similarity edge at the top.
    priority_queue<Edge, vector<Edge>, edgeComparator> _edgeHeap;  
+
+   // Given a parameter (global) maxCandidates per Node, return if we should find
+   // more high similarity documents or not.
+   bool hasEnoughCandidates() {
+     return (_degree >= maxCandidates);
+   }
 
    // Add edge in the priority queue and update the degree.
    void addEdge(const Edge& edge, const uint& maxCapacity) {
@@ -99,10 +109,12 @@ class Graph {
 class minHash {
   public:
    uint _docid;
+   uint _numTerms;
    vector<unsigned short> _minH;
    minHash() {};
-   minHash(const uint inDocid, vector<unsigned short> inMinH) {
-     _docid = inDocid; 
+   minHash(const uint inDocid, const uint inNumTerms, vector<unsigned short> inMinH) {
+     _docid = inDocid;
+     _numTerms = inNumTerms; 
      _minH = inMinH;
    }
 };
@@ -131,7 +143,7 @@ void keepPrimesMoreThan(const uint primeMIN, vector<uint>& primes);
 void randomlySelectKNumbers(const uint k, vector<uint>&primes);
 void printVec(const vector<uint> vec);
 void printUshortVec(const vector<unsigned short> vec);
-unsigned short hash(const uint termId, const uint ithHashFunction,
+unsigned short hashF(const uint termId, const uint ithHashFunction,
           const uint domain, const vector<uint>& hashFunctions);
 void writeOut(const vector<uint> allPrimes, string hashFunctionsFile);
 vector<uint> loadHashFunctions(string hashFunctionsFile);
@@ -161,12 +173,14 @@ void printBin(unsigned long i);
 vector<minHash> createMinHashesForKDocs(const uint k, vector<uint>& hashFuncs);
 double computeJaccardSimilarity(minHash* a, minHash* b);
 double computeIntersection(minHash* a, minHash*b );
-void addEdges(const vector<superHash> superHashVec, Graph& sparseGraph); 
+void selectNearestNeighborCandidates(const vector<superHash> superHashVec, Graph& sparseGraph); 
 void findRangeWithSameSuperHash(const vector<superHash> superHashVec, const uint start, uint& end);
 void addEdgesToSimilarDocs(const vector<superHash> superHashVec,
                            const uint startIdx,
                            const uint endIdx,
+                           const double simThreshold,
                            Graph& sparseGraph);
+
 ////////////////////// Driver /////////////////////////
 int main() {
   srand(time(0));
@@ -222,29 +236,30 @@ void createSparseGraph(vector<minHash>& minHashes,
     sort(superHashVec.begin(), superHashVec.end(), superHashComparator);
 
     // Add edges in the graph.
-    addEdges(superHashVec, sparseGraph);
+    selectNearestNeighborCandidates(superHashVec, sparseGraph);
   }
   // return sparseGraph;
 }
 
-// TODO(dimopoulos): implementation.
+// Foreach threhold, select the nearest neighbors of similar documents.
 // Assumption: superHash vector of size more than 0.
-void addEdges(const vector<superHash> superHashVec, Graph& sparseGraph) {
+void selectNearestNeighborCandidates(const vector<superHash> superHashVec, Graph& sparseGraph) {
   assert(superHashVec.size() > 0);
-  uint curStartIdx = 0;
-  uint curEndIdx = 0;
-  uint lastIdx = superHashVec.size();
+  for (uint numThreshold = 0; numThreshold < numThresholds; ++numThreshold) {
+    uint curStartIdx = 0;
+    uint curEndIdx = 0;
+    uint lastIdx = superHashVec.size();
+    while (curStartIdx != lastIdx) {
+      // Find docID ranges with same superHashes.
+      findRangeWithSameSuperHash(superHashVec, curStartIdx, curEndIdx);
 
-  while (curStartIdx != lastIdx) {
-    // Find docID ranges with same superHashes.
-    findRangeWithSameSuperHash(superHashVec, curStartIdx, curEndIdx);
+      // Add edges to document-nodes with high similarity.
+      addEdgesToSimilarDocs(superHashVec, curStartIdx, curEndIdx, thresholds[numThreshold], sparseGraph);
 
-    // Add edges to document-nodes with high similarity.
-    addEdgesToSimilarDocs(superHashVec, curStartIdx, curEndIdx, sparseGraph);
-
-    ++curEndIdx;  // next start idx.
-    curStartIdx = curEndIdx;  // set curStartIdx.
-    assert(curEndIdx == curStartIdx);
+      ++curEndIdx;  // next start idx.
+      curStartIdx = curEndIdx;  // set curStartIdx.
+      assert(curEndIdx == curStartIdx);
+    }
   }
 }
 
@@ -256,27 +271,42 @@ void addEdges(const vector<superHash> superHashVec, Graph& sparseGraph) {
 void addEdgesToSimilarDocs(const vector<superHash> superHashVec,
                            const uint startIdx,
                            const uint endIdx,
+                           const double simThreshold,
                            Graph& sparseGraph) {
   uint numDocsWithSameSuperHash = endIdx - startIdx;
   if (numDocsWithSameSuperHash == 0) return;
 cout << "range: " << numDocsWithSameSuperHash << " starid: " << startIdx << " - " << endIdx << endl;
 
-  uint pairwiseComputationThreshold = 100;
+  uint pairwiseComputationThreshold = 100; // TODO(globals)
   if (numDocsWithSameSuperHash < pairwiseComputationThreshold) {
-    for (uint i = startIdx; i < endIdx - 1; ++i) { // compute all scores.
-      for (uint j = i + 1; j < endIdx; ++j) {
-        uint sourceDocid = superHashVec[i]._minH->_docid;
+    for (uint i = startIdx; i < endIdx; ++i) { // compute all scores for each node.
+      uint sourceDocid = superHashVec[i]._minH->_docid;
+      // In case the current Node has already enough candidates, we skip the process.
+      if (sparseGraph._nodes[sourceDocid].hasEnoughCandidates()) {
+        cout << "docid: " << sourceDocid << " has enough candidates!! " << endl;
+        continue;
+      }
+
+      for (uint j = startIdx; (j < endIdx) && (i != j); ++j) {
         uint destinationDocid =superHashVec[j]._minH->_docid;
         double score = computeJaccardSimilarity(superHashVec[i]._minH, superHashVec[j]._minH);
+        // Intersection is estimated: Jaccard*(|A| + |B|) / (1 + Jacccard), where |A| #terms.
+        if (similarityMeasure == 1) { // intersection.
+          uint iSz = superHashVec[i]._minH->_numTerms;
+          uint jSz = superHashVec[j]._minH->_numTerms;
+          score = score*((double) iSz + (double) jSz) / (1.0f + score);  
+        }
         Edge edgeSource(sourceDocid, score);
+        sparseGraph._nodes[sourceDocid].addEdge(edgeSource, maxCandidates); 
         Edge edgeDestination(destinationDocid, score);
-        sparseGraph._nodes[sourceDocid].addEdge(edgeSource, 100);
-        sparseGraph._nodes[destinationDocid].addEdge(edgeDestination, 1000);
+        sparseGraph._nodes[destinationDocid].addEdge(edgeDestination, maxCandidates);
       }
     }  
   } else {  // compute sample of scores for each node/document.
     for (uint i = startIdx; i < endIdx - 1; ++i) {
       uint sourceDocid = superHashVec[i]._minH->_docid;
+      // In case the current Node has already enough candidates, we skip the process.
+      if (sparseGraph._nodes[sourceDocid].hasEnoughCandidates()) continue;
       set<uint> selectedNodes;
   
       uint numIterations = 0;
@@ -286,13 +316,17 @@ cout << "range: " << numDocsWithSameSuperHash << " starid: " << startIdx << " - 
         if ((selectedNodes.count(randNode) == 0) && (randNode != i)) {
           selectedNodes.insert(randNode);
 
-          uint sourceDocid = superHashVec[i]._minH->_docid;
           uint destinationDocid =superHashVec[randNode]._minH->_docid;
           double score = computeJaccardSimilarity(superHashVec[i]._minH, superHashVec[randNode]._minH);
+          if (similarityMeasure == 1) { // intersection.
+            uint iSz = superHashVec[i]._minH->_numTerms;
+            uint randNodeSz = superHashVec[randNode]._minH->_numTerms;
+            score = score*((double) iSz + (double) randNodeSz) / (1.0f + score);  
+          }
           Edge edgeSource(sourceDocid, score);
+          sparseGraph._nodes[sourceDocid].addEdge(edgeSource, maxCandidates);
           Edge edgeDestination(destinationDocid, score);
-          sparseGraph._nodes[sourceDocid].addEdge(edgeSource, 100);
-          sparseGraph._nodes[destinationDocid].addEdge(edgeDestination, 1000);
+          sparseGraph._nodes[destinationDocid].addEdge(edgeDestination, maxCandidates); 
         }
         ++numIterations;
       }
@@ -365,14 +399,14 @@ inline minHash createMinHashes(const uint docID,
   for (uint i = 0; i < hashFunctions.size(); ++i) {
     for (uint tidIdx = 0; tidIdx < tids.size(); ++tidIdx) {
       // Note, plus 1 in order to ensure that termId always start with 1!
-      minHashes[i] = min(hash(tids[tidIdx] + 1, i, domain, hashFunctions), minHashes[i]);
+      minHashes[i] = min(hashF(tids[tidIdx] + 1, i, domain, hashFunctions), minHashes[i]);
     }
   }
-  minHash tmpMinHash(docID, minHashes);
+  minHash tmpMinHash(docID, tids.size(), minHashes);
   return tmpMinHash;
 }
 
-inline unsigned short hash(const uint termId,
+inline unsigned short hashF(const uint termId,
           const uint ithHashFunction,
           const uint domain,
           const vector<uint>& hashFunctions) {
