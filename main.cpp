@@ -104,6 +104,7 @@ class Graph {
   public: 
     vector<Node> _nodes;
     Graph(const uint sz) { _nodes.resize(sz, Node()); }
+    vector<uint> GreedyNearestNeighborTSP();
 };
 
 class minHash {
@@ -165,8 +166,8 @@ vector<uint> randomlySelectKNumbersUpTo(const uint k, const uint max);
 void writeoutSuperHashTemplates(const uint superHashSize, const uint numSuperHashes,
                                 const uint numHashFunctions, const string file);
 vector<vector<unsigned short> > loadSuperHashTemplates(const string file);
-void createSparseGraph(vector<minHash>& minHashes, 
-                       vector<vector<unsigned short> >& superHashTemplates);
+Graph createSparseGraph(vector<minHash>& minHashes, 
+                        vector<vector<unsigned short> >& superHashTemplates);
 superHash createSuperHash(minHash& minHashes, 
                           const vector<unsigned short>& superHashTemplate);
 void printBin(unsigned long i);
@@ -207,16 +208,17 @@ int main() {
 
   vector<minHash> minHashDS = createMinHashesForKDocs(100000, hashFuncs);
   cout << "###############################" << endl;
-  createSparseGraph(minHashDS, superHashTemplates);
-
+  Graph sparseGraph = createSparseGraph(minHashDS, superHashTemplates);
+  vector<uint> docidAssignment = sparseGraph.GreedyNearestNeighborTSP();
+ 
   return 0;
 }
 
 ////////////////////// Methods' implementation /////////////////////////
 
 // TODO(dimopoulos): change method's name.
-void createSparseGraph(vector<minHash>& minHashes, 
-                       vector<vector<unsigned short> >& superHashTemplates) {
+Graph createSparseGraph(vector<minHash>& minHashes, 
+                        vector<vector<unsigned short> >& superHashTemplates) {
   assert(superHashTemplates.size() > 0);
   assert(minHashes.size() > 0);
  
@@ -238,7 +240,31 @@ void createSparseGraph(vector<minHash>& minHashes,
     // Add edges in the graph.
     selectNearestNeighborCandidates(superHashVec, sparseGraph);
   }
-  // return sparseGraph;
+  return sparseGraph;
+}
+
+vector<uint> Graph::GreedyNearestNeighborTSP() {
+  vector<uint> docidAssignment(_nodes.size(), 0);
+
+  // Select the edge with the highest similarity in the sparseGraph.
+  Edge largestSimilarityEdge(0, 0.0f);
+  uint source = 0;
+  for (uint i = 0; i < _nodes.size(); ++i) {
+    if (_nodes[i]._edgeHeap.top()._similarity > largestSimilarityEdge._similarity) {
+      largestSimilarityEdge._similarity = _nodes[i]._edgeHeap.top()._similarity;
+      largestSimilarityEdge._docID = _nodes[i]._edgeHeap.top()._docID;
+      source = i;
+    }
+  }
+  // Start with a partial path with a vertex/node from the largestSimilarityEdge.
+  docidAssignment[0] = source;
+  
+  // While there are still unvisited nodes continue.
+  
+
+  
+
+  return docidAssignment;
 }
 
 // Foreach threhold, select the nearest neighbors of similar documents.
