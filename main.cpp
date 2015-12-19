@@ -18,12 +18,11 @@ using namespace std;
 const uint LARGENUMBER = 20000000;
 const uint primeMax = 20000000;
 const uint primeMin = 10000000;
-const uint numHashFunctions = 50;
-const uint numSuperHashes = 5; //20; // number of super hashes
+const uint numHashFunctions = 100;  // # min-hashes
+const uint numSuperHashes = 5; //20; # super hashes
 const uint superHashSize = 3; // glue 3 min-hash to get a SH
-const uint numMinSH = 2;
 const uint domain = 15773;
-const string hashFunctionsFile = "hashFunctions";
+const string hashFunctionsFile = "hashFunctions_100";
 const string superHashTemplatesFile = "superHashTemplates";
 const uint similarityMeasure = 0; // 0: Jaccard, 1: intersection.
 const uint numThresholds = 2; //6;
@@ -188,12 +187,17 @@ void selectKRandom(vector<uint>& randNodes, int numElementsToSample);
 int main() {
   srand(time(0));
 /*
+  // 1. Create hash functions for min-wise hashing.
   vector<uint> allPrimes = getPrimesUpTo(primeMax);
   keepPrimesMoreThan(primeMin, allPrimes);
   randomlySelectKNumbers(numHashFunctions, allPrimes);
+  // 2. Writing out the hash functions in file hashFunctionsFile.
   writeOut(allPrimes, hashFunctionsFile);
-  printVec(allPrimes);
+  // 3. Loading the hash functions from file hashFunctionsFile.
   vector<uint> hashFuncs = loadHashFunctions(hashFunctionsFile);
+
+  // Print primes.
+  printVec(allPrimes);
 */
 
   vector<uint> hashFuncs = loadHashFunctions(hashFunctionsFile);
@@ -205,9 +209,12 @@ int main() {
   //minHashDS.push_back(createMinHashes(docid, doc, hashFuncs));
   //printUshortVec(minHashes);
 
+  // 4. Create and write out superhash templates.
   //writeoutSuperHashTemplates(superHashSize, numSuperHashes, numHashFunctions, superHashTemplatesFile);
+  // 5. Load superhash templates.
   vector<vector<unsigned short> > superHashTemplates = loadSuperHashTemplates(superHashTemplatesFile);
 
+  // 6. Generate signatures for documents. 
   vector<minHash> minHashDS = createMinHashesForKDocs(10000, hashFuncs);
   cout << "###############################" << endl;
   Graph sparseGraph = createSparseGraph(minHashDS, superHashTemplates);
@@ -216,7 +223,6 @@ int main() {
   //Graph sparseGraph = constructArtificialGraph(10);
   vector<uint> docidAssignment = sparseGraph.GreedyNearestNeighborTSP();
   printVec(docidAssignment);  
-
 
   return 0;
 }
@@ -508,11 +514,13 @@ double computeJaccardSimilarity(minHash* a, minHash* b) {
 superHash createSuperHash(minHash& minHashes, 
                           const vector<unsigned short>& superHashTemplate) {
   superHash tmpSH(&minHashes);  // superhash is set to 0 by the constructor.
-  assert(superHashSize > numMinSH); // size of each SH must be at least numMinSH 
-  for (uint i = 0; i < superHashSize - 1; ++i) {
+  assert(superHashSize < 4);  // since SH is 8 bytes, we can only glue 4 min-hash of 8 bytes.
+  uint i = 0;
+  for (; i < superHashSize - 1; ++i) {
     tmpSH._superHash |= minHashes._minH[i];
     tmpSH._superHash <<= 16;
   }
+  assert(numSuperHashes - 1 == i);
   tmpSH._superHash |= minHashes._minH[ numSuperHashes - 1 ];
   return tmpSH;
 }
@@ -646,6 +654,7 @@ unsigned short StrToUShort(const string number_in_string) {
   return number;
 }
 
+// Construct super hashes.
 void writeoutSuperHashTemplates(const uint superHashSize, const uint numSuperHashes,
                                 const uint numHashFunctions, const string file) {
   // Create index vector of size number of hash functions.
