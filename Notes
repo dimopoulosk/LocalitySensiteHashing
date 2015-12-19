@@ -1,3 +1,14 @@
+The code is split into the following pieces:
+(a) min-hash generation
+(b) createSparseGraph(), which includes the following steps: 
+    for each threshold of similarity,
+      for each document (or node), 
+         createSuperHash() // according to the threshold
+      sortSuperHashes() 
+      addEdgesToSparseGraph()
+  FilterCandidates()
+(c) TSP()
+
 1. Very short documents are treated automatically.
 2. for each term in each document, we apply the k-th minwise hash function and keep the min value
 3. similarity measure: intersection or jaccard (# same minhashes / # minhashes)
