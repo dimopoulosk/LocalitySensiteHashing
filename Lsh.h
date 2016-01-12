@@ -27,6 +27,9 @@ const uint primeMax = 20000000;
 const uint primeMin = 10000000;
 const uint domain = 15773;
 
+// Parameter for random generation function.
+int seed = 123;
+
 // Files for min-wise hash functions and superHashTemplates.
 const string hashFunctionsFile = "hashFunctions_100";
 const string superHashTemplatesFile = "superHashTemplates_";
@@ -35,16 +38,16 @@ const string superHashTemplatesFile = "superHashTemplates_";
 // Assumption: numThresholds must be the same with the size of the settings.
 const uint numThresholds = 5;
 const double thresholds[ 5 ] = { 0.98, 0.90, 0.80, 0.70 , 0.6 };
-const uint numSuperhashForTheta[ 5 ] = { 2, 9, 20, 50, 50 };
-const uint numMinhashPerSuperhashForTheta[ 5 ] = { 40, 21, 14, 11, 8 };
+const uint numSuperhashForTheta[ 5 ] = { 2, 9, 20, 25, 30 };
+const uint numMinhashPerSuperhashForTheta[ 5 ] = { 40, 21, 14, 9, 6 };
 
 // Similarity measure during the Filtering (of candidates) step.
 const uint similarityMeasure = 0; // 0: Jaccard, 1: intersection.
 
 // Parameters for number of candidates.
 const uint pairsThreshold = 100;
-const uint maxCandidates = 3;//10; // 100 // before filtering.
-const uint numCandidates = 3; //5; // filtering.
+const uint maxCandidates = 300; // before filtering.
+const uint numCandidates = 200; // after filtering.
 
 ////////////////////// Class declarations /////////////////////////
 class Edge {
@@ -110,9 +113,18 @@ class minHash {
 class Graph {
   public: 
     vector<Node> _nodes;
-    Graph(const uint sz) { _nodes.resize(sz, Node()); }
+    Graph(const uint sz) { _nodes.resize(sz, Node()); 
+    //TOGO
+    ones = 0;
+    pairs = 0;
+    samples = 0;
+}
     vector<uint> GreedyNearestNeighborTSP(const uint baseDocID);
     void FilterCandidates(const uint typeOfSimilarity, vector<minHash>& minHashes);
+
+    // helper TOGO
+    profiler one, pair, sample;
+    uint ones, pairs, samples;
 };
 
 // Version with MD5().
@@ -178,13 +190,13 @@ double computeJaccardSimilarity(minHash* a,
                                 minHash* b);
 double computeIntersection(minHash* a,
                            minHash*b );
-void selectNearestNeighborCandidates(const vector<superHash> superHashVec,
+void selectNearestNeighborCandidates(const vector<superHash>& superHashVec,
                                      Graph& sparseGraph, 
                                      const double score,
                                      set<uint>& idxOfNodesLeft);
-void findRangeWithSameSuperHash(const vector<superHash> superHashVec,
+void findRangeWithSameSuperHash(const vector<superHash>& superHashVec,
                                 const uint start, uint& end);
-void addEdgesToSimilarDocs(const vector<superHash> superHashVec,
+void addEdgesToSimilarDocs(const vector<superHash>& superHashVec,
                            const uint startIdx,
                            const uint endIdx,
                            const double score,
@@ -199,6 +211,7 @@ superHash createSuperHash_MD5(minHash& minHashes,
                               const uint baseDocID);
 void createSuperhashTemplatesGivenSetup(const uint numMinhash,
                                         const string basefile);
+uint randInRangeMS(const uint min, const uint max, int* seed);
 
 ////////////////////// Methods' implementation /////////////////////////
 
@@ -209,6 +222,17 @@ void createSuperhashTemplatesGivenSetup(const uint numMinhash,
 // to some expected score value based on the setup of the superhashes.
 // Assumption: the similarityMeasure is defined in constants!
 void Graph::FilterCandidates(const uint typeOfSimilarity, vector<minHash>& minHashes) {
+
+  // TOGO STATS
+  unsigned long long uniqueCand = 0;
+  unsigned long long cntCand = 0;
+  for (uint i = 0; i < _nodes.size(); ++i) {
+    cntCand += _nodes[i]._candidates.size();
+  }
+  double avgCand = ((double) cntCand / (double) _nodes.size());
+  cout << "______ Avg Cand number: " << setprecision(20) << avgCand << " for #nodes: " << _nodes.size() << " and total candidates: " << cntCand << endl;
+  // ENED OF TODO
+
   // For each node of the sparse graph, if candidate (edges) vector not empty,
   // calculate the score based on the given similarity.
   for (uint i = 0; i < _nodes.size(); ++i) {
@@ -251,9 +275,17 @@ void Graph::FilterCandidates(const uint typeOfSimilarity, vector<minHash>& minHa
       _nodes[i].addEdge( tmpEdges[k] );
     }
 
+// TOGO
+uniqueCand += _nodes[i]._edgeHeap.size();
+
     // Erase candidates for this node.
     _nodes[i]._candidates.clear();
   }
+
+// TOGO
+  double avgUniqCand = ((double) uniqueCand / (double) _nodes.size());
+  cout << "___AFTER___ Avg Cand number: " << setprecision(20) << avgUniqCand << " for #nodes: " << _nodes.size() << " and total candidates: " << uniqueCand << endl;
+// END OF TOGO
 }
 
 // Given the sparseGraph, run TSP to obtain an ordering.
@@ -273,13 +305,31 @@ void Graph::FilterCandidates(const uint typeOfSimilarity, vector<minHash>& minHa
 // Note that we provide as argument the baseDocID, so we can create the mapping
 // in range [x, y), since so far we have been working in range [0, y - x).
 vector<uint> Graph::GreedyNearestNeighborTSP(const uint baseDocID) {
+
+  profiler p1;  // TOGO
+  p1.StartPause(); // TOGO
+  p1.Continue(); // TOGO
   // Vector to store the docid assignment (oldDocid -> newDocid).
   vector<uint> docidAssignment(_nodes.size(), 0);
+  p1.PauseMicroseconds(); // tOGO
+
+  profiler p2;  // TOGO
+  p2.StartPause(); // TOGO
+  p2.Continue(); // TOGO
+
+// ADDON
+  set<uint> remainingNodes;
+  set<uint>::iterator it;
+// END OF ADDON
 
   // Select the edge with the highest similarity in the sparseGraph.
   Edge largestSimilarityEdge(0, 0.0f);
   uint source = 0;  // will be used as the source of the current edge.
   for (uint i = 0; i < _nodes.size(); ++i) {
+// ADDON
+//    remainingNodes.insert(i);
+// end of ADDON
+
     if (!_nodes[i]._edgeHeap.empty() &&
        (_nodes[i]._edgeHeap.top()._similarity > largestSimilarityEdge._similarity)) {
       largestSimilarityEdge._similarity = _nodes[i]._edgeHeap.top()._similarity;
@@ -287,6 +337,12 @@ vector<uint> Graph::GreedyNearestNeighborTSP(const uint baseDocID) {
       source = i;
     }
   }
+
+  p2.PauseMicroseconds(); // tOGO
+  profiler p34; //tOGO
+  profiler p35;  // TOGO
+  p34.StartPause(); // TOGO
+  p35.StartPause(); // TOGO
   // Start with a partial path with a vertex/node from the largestSimilarityEdge.
   docidAssignment[0] = source;
 
@@ -294,6 +350,16 @@ vector<uint> Graph::GreedyNearestNeighborTSP(const uint baseDocID) {
   visited[ source ] = true;
   uint numNodesSelected = 1; 
   uint dest = largestSimilarityEdge._docID;
+
+// ADDON
+//cout << "size of remaining " << remainingNodes.size() << endl;
+//   remainingNodes.erase(source);
+//cout << "after size of remaining " << remainingNodes.size() << endl;
+// end of addon
+
+  profiler p3;  // TOGO
+  p3.StartPause(); // TOGO
+  p3.Continue(); // TOGO
 
   // While there are still unvisited nodes continue.
   while (numNodesSelected < _nodes.size()) {
@@ -310,12 +376,15 @@ vector<uint> Graph::GreedyNearestNeighborTSP(const uint baseDocID) {
       }
     }
 
+  p34.Continue(); //TOGO
+
     // if not found, select node with the largest remaining similarity.
     if (!foundNextNode) {
       largestSimilarityEdge._similarity = 0.0f;  // re-use edge.
       largestSimilarityEdge._docID = 0;
       bool foundNextNodeHeuristic = false;
-      for (uint i = 0; i < _nodes.size(); ++i) {
+///*
+      for (uint i = 0; i < _nodes.size(); ++i) { 
         if (!visited[ i ] &&
             !_nodes[i]._edgeHeap.empty() &&
             (_nodes[i]._edgeHeap.top()._similarity > largestSimilarityEdge._similarity)) {
@@ -325,27 +394,86 @@ vector<uint> Graph::GreedyNearestNeighborTSP(const uint baseDocID) {
           foundNextNodeHeuristic = true;
         }
       }
+//*/
 
+/*
+// ADDON
+      for (it = remainingNodes.begin(); it != remainingNodes.end(); ++it) { 
+        uint cnt = *it;
+        if (!visited[ cnt ] &&
+            !_nodes[cnt]._edgeHeap.empty() &&
+            (_nodes[cnt]._edgeHeap.top()._similarity > largestSimilarityEdge._similarity)) {
+          largestSimilarityEdge._similarity = _nodes[cnt]._edgeHeap.top()._similarity;
+          largestSimilarityEdge._docID = cnt;
+          curNode = cnt;
+          foundNextNodeHeuristic = true;
+// tOGO
+//cout << " -- curNode in next largest sim: " << cnt << endl;
+        }
+      }
+// END OF ADDON
+*/
+  p34.PauseMicroseconds(); // TOGO
+  p35.Continue(); // TOGO
+///*
       // In case that there are no nodes with edges left.
       if (!foundNextNodeHeuristic) {
         curNode = 0;
         while (curNode < _nodes.size() && visited[ curNode ]) {
           ++curNode;
         }
-      } 
+      }
+//*/
+/*
+// ADDON
+      // In case that there are no nodes with edges left.
+      if (!foundNextNodeHeuristic) {
+        curNode = 0;
+        for (it = remainingNodes.begin(); it != remainingNodes.end(); ++it) { 
+          if (!visited[*it]) {
+            curNode = *it;
+//togo
+//cout << " --- found isolated node: " << curNode << endl;
+            break;
+          }
+        }
+      }
+// ADDON
+////*/
+  p35.PauseMicroseconds(); // TOGO 
     }
-
     // The next node has already been selected.
     visited[ curNode ] = true;
     docidAssignment[ numNodesSelected ] = curNode;
     ++numNodesSelected;  
     source = curNode;
+
+// ADDON
+//cout << "before removing sourcenode: " << source << " size: " << remainingNodes.size() << endl;
+//   remainingNodes.erase(source);
+//cout << "removing: " << source << " and newsize: " << remainingNodes.size() << endl;
+// end of addon
+
   }
 
+  p3.PauseMicroseconds(); // TOGO
+
+  profiler p4;  // TOGO
+  p4.StartPause(); // TOGO
+  p4.Continue(); // TOGO
   // Reconstruct the actual docids in the mapping by adding the baseDocID.
   for (uint i = 0; i < docidAssignment.size(); ++i) {
     docidAssignment[i] += baseDocID;
   }
+
+  p4.PauseMicroseconds(); //TOGO
+
+  cout << setprecision(20) << "P1 init: " << p1.GetTime() << endl;
+  cout << setprecision(20) << "P2 find largest edge: " << p2.GetTime() << endl;
+  cout << setprecision(20) << "P3 core: " << p3.GetTime() << endl;
+  cout << setprecision(20) << "P34 : " << p34.GetTime() << endl;
+  cout << setprecision(20) << "P35 no nodes with edges left: " << p35.GetTime() << endl;
+  cout << setprecision(20) << "P4 reconstruction: " << p4.GetTime() << endl;
 
   return docidAssignment;
 }
@@ -358,6 +486,12 @@ Graph createSparseGraph(vector<minHash>& minHashes, const uint baseDocID) {
  
   // Initialize a graph representation.
   Graph sparseGraph(minHashes.size());
+
+  // TOGO
+  sparseGraph.one.StartPause();
+  sparseGraph.pair.StartPause();
+  sparseGraph.sample.StartPause();
+  // ENDOFTOGO
 
   // Maintain the nodes-documents that do no have enough candidates (at first all).
   // These nodes are going to participate in rounds until enough neighbors
@@ -390,6 +524,11 @@ Graph createSparseGraph(vector<minHash>& minHashes, const uint baseDocID) {
  
     // Current threshold.
     const double curTheta = thresholds[ j ];
+    cout << "Theta: " << curTheta << endl;
+
+profiler p1; // TOGO
+p1.StartPause(); // TOGO
+p1.Continue();  //TOGO
 
     // Foreach super hash template.
     uint numSuperHashes = superHashTemplates.size();
@@ -416,14 +555,19 @@ profSelectNearest.Continue();
       // Select nearest neighbor candidates for the sparse graph.
       selectNearestNeighborCandidates(superHashVec, sparseGraph, curTheta, idxOfNodesLeft);
 profSelectNearest.PauseMicroseconds();
-
     }
+p1.PauseMicroseconds(); // TOGO
+//cout << setprecision(20) << "time: " << p1.GetTime() << endl; // TOGO
   }
 
 profFiltering.Continue();
   // Filter nearest neighbors (candidates) by computing the similariy (given) from the min-hashes.
   sparseGraph.FilterCandidates(similarityMeasure, minHashes);
 profFiltering.StartPause();
+
+cout << "Ones: " << sparseGraph.ones << endl;
+cout << "Pairs: " << sparseGraph.pairs << endl;
+cout << "Samples: " << sparseGraph.samples << endl;
 
 cout << setprecision(20);
 cout << "Time for SH creation: " << profSHCreation.GetTime() << endl;
@@ -439,6 +583,11 @@ vector<uint> docidAssignment = sparseGraph.GreedyNearestNeighborTSP(baseDocID);
 profTSP.PauseMicroseconds();
 cout << "Time for TSP: " << profTSP.GetTime() << endl;
 
+cout << "---------------------" << endl;
+cout << "Time for singles: " << sparseGraph.one.GetTime() << endl;
+cout << "Time for pairs: " << sparseGraph.pair.GetTime() << endl;
+cout << "Time for sampling: " << sparseGraph.sample.GetTime() << endl;
+
   return sparseGraph;
 }
 
@@ -450,7 +599,7 @@ cout << "Time for TSP: " << profTSP.GetTime() << endl;
 // the sparse graph (so we can add edges of candidates), the current score based on the superhash
 // construction setting and the nodes without enough candidates, add candidates by finding nodes
 // with the same superhash values.
-void selectNearestNeighborCandidates(const vector<superHash> superHashVec,
+void selectNearestNeighborCandidates(const vector<superHash>& superHashVec,
                                      Graph& sparseGraph,
                                      const double score,
                                      set<uint>& idxOfNodesLeft) {
@@ -494,7 +643,7 @@ void selectNearestNeighborCandidates(const vector<superHash> superHashVec,
 // and the nodes participating in the round (idxOfNodesLeft), (i) do nothing if there is only one docid,
 // (ii) add all document pairs as candidates (iii) add a sample of doc pairs as candidates. 
 // TOCHECK!! (ii and iii).
-void addEdgesToSimilarDocs(const vector<superHash> superHashVec,
+void addEdgesToSimilarDocs(const vector<superHash>& superHashVec,
                            const uint startIdx,
                            const uint endIdx,
                            const double score,
@@ -507,6 +656,8 @@ void addEdgesToSimilarDocs(const vector<superHash> superHashVec,
 //cout << "range: " << numDocsWithSameSuperHash << " starid: " << startIdx << " - " << endIdx << endl;
  
   if (numDocsWithSameSuperHash == 1) {  // two documents with the same superhash.
+++sparseGraph.ones; // TOGO
+sparseGraph.one.Continue(); // TOGO
     uint sourceDocid = superHashVec[ startIdx ]._docID;
     // In case the current Node has already enough candidates, we skip the process.
     if (sparseGraph._nodes[sourceDocid]._candidates.size() > maxCandidates) {
@@ -517,10 +668,26 @@ void addEdgesToSimilarDocs(const vector<superHash> superHashVec,
     Edge edgeSource(destinationDocid, score);
     sparseGraph._nodes[sourceDocid]._candidates.push_back(edgeSource);
 
+sparseGraph.one.PauseMicroseconds(); // TOGO
     // Add edge with the opposite direction.
     //Edge edgeDestination(sourceDocid, score);
     //sparseGraph._nodes[destinationDocid]._candidates.push_back(edgeDestination);
   } else if (numDocsWithSameSuperHash < pairsThreshold) {
+
+/* sanity check
+uint cnt = 0;
+for (uint i = 0; i < superHashVec[startIdx]._minH->_minH.size(); ++i) {
+  unsigned short sH1 = superHashVec[startIdx]._minH->_minH[i];
+  unsigned short sH2 = superHashVec[startIdx+1]._minH->_minH[i];
+  cout << i << " minh[0]: " << sH1 << " minh[1]: " << sH2 << endl;
+  if (sH1 == sH2) ++cnt;
+}
+cout << cnt << " out of :" << superHashVec[startIdx]._minH->_minH.size() << endl;
+exit(0);
+*/
+
+++sparseGraph.pairs; // TOGO
+sparseGraph.pair.Continue(); // TOGO
     for (uint i = startIdx; i < endIdx; ++i) { 
       uint sourceDocid = superHashVec[i]._docID;
       // In case the current Node has already enough candidates, we skip the process.
@@ -547,7 +714,12 @@ void addEdgesToSimilarDocs(const vector<superHash> superHashVec,
         }
       }
     }  
+
+sparseGraph.pair.PauseMicroseconds(); // TOGO
   } else {  // compute sample of scores for each node/document.
+++sparseGraph.samples; //TOGO
+sparseGraph.sample.Continue(); // TOGO
+    assert(numDocsWithSameSuperHash >= pairsThreshold);
     for (uint i = startIdx; i < endIdx; ++i) {
       uint sourceDocid = superHashVec[i]._docID;
       // In case the current Node has already enough candidates, we skip the process.
@@ -557,12 +729,21 @@ void addEdgesToSimilarDocs(const vector<superHash> superHashVec,
       }
   
       // Select K random nodes.
-      vector<uint> randNodes((endIdx - startIdx), startIdx);
+      vector<uint> randNodes(numDocsWithSameSuperHash, startIdx);
       for (uint cnt = 0; cnt < randNodes.size(); ++cnt) {
         randNodes[ cnt ] += cnt;
+        assert(randNodes[cnt] >= startIdx);
+        assert(randNodes[cnt] < endIdx);
       }
-      randNodes.erase(randNodes.begin() + i);  // remove the element same with i.
-      selectKRandom(randNodes, abs((int) (maxCandidates - sparseGraph._nodes[sourceDocid]._candidates.size()) ));
+       
+      uint idxOfSameElement = i - startIdx;
+      assert(idxOfSameElement < randNodes.size());
+      assert(randNodes[ idxOfSameElement ] == i);
+      randNodes.erase(randNodes.begin() + idxOfSameElement); // remove the element same with i.
+
+      // Compute how many edges to add to the node.
+      int numEdgesToAdd = min((int) numDocsWithSameSuperHash - 1, abs((int) (maxCandidates - sparseGraph._nodes[sourceDocid]._candidates.size()) ) );
+      selectKRandom(randNodes, numEdgesToAdd); //abs((int) (maxCandidates - sparseGraph._nodes[sourceDocid]._candidates.size()) ));
       uint randNode = 0; 
 
       for (uint j = 0; j < randNodes.size(); ++j) {
@@ -582,13 +763,14 @@ void addEdgesToSimilarDocs(const vector<superHash> superHashVec,
         }
       }
     }
+sparseGraph.sample.PauseMicroseconds(); // TOGO
   }
 }
 
 // Given the superHash vector, the current start and end indexes, find the range [start, end],
 // such that all docIDs in range have the same superhash.
 // Assumption: startIdx equal to endIdx (endIdx is updated here), while startIdx is stable.
-void findRangeWithSameSuperHash(const vector<superHash> superHashVec, const uint startIdx, uint& endIdx) {
+void findRangeWithSameSuperHash(const vector<superHash>& superHashVec, const uint startIdx, uint& endIdx) {
   assert(startIdx == endIdx);
   assert(startIdx < superHashVec.size());
 
@@ -638,6 +820,8 @@ double computeJaccardSimilarity(minHash* a, minHash* b) {
 superHash createSuperHash_MD5(minHash& minHashes, 
                               const vector<unsigned short>& superHashTemplate,
                               const uint baseDocID) {
+/* // Benchmark for 100k artificial docs for all thresholds, total: 3.88 minutes.
+  // String version.
   // Concatenate several min-hash signatures.
   string superHashStr;
   for (uint i = 0; i < superHashTemplate.size(); ++i) {
@@ -648,9 +832,35 @@ superHash createSuperHash_MD5(minHash& minHashes,
 
   // Create new superhash by reducing the docID in range [0, x).
   assert(minHashes._docid >= baseDocID);
-  uint newDocID = minHashes._docid - baseDocID;
+  uint newDocID = minHashes._docid - baseDocID;  
   superHash newSuperHash( md5.digestString(&superHashStr[0]), &minHashes, newDocID);
+
   return newSuperHash;
+*/
+
+///*
+  // Bechmark for 100k artificial docs for all thresholds, total: 0.6 minutes.
+  assert(minHashes._minH.size() > 0);
+  size_t sZ = superHashTemplate.size()*sizeof(minHashes._minH[0]); 
+  unsigned char superHashAr[ sZ + 1];  // +1 for the termination '\0'.
+  memset((void*) &superHashAr, 0, sizeof(superHashAr));
+  superHashAr[ sZ ] = '\0';
+
+  // Byte version.
+  for (uint i = 0, j = 0; i < superHashTemplate.size(); ++i, j += 2) {
+    memcpy((void*) &superHashAr[j], (void*) &minHashes._minH[i], sizeof(minHashes._minH[i]));
+  }
+
+  // Apply MD5() to the concatenation.
+  MD5 md5;
+
+  // Create new superhash by reducing the docID in range [0, x).
+  assert(minHashes._docid >= baseDocID);
+  uint newDocID = minHashes._docid - baseDocID; // Note that we may reduce 1 for the final code if the docIDs start from 1.
+  //superHash newSuperHash( md5.digestString((char*) &superHashAr[0]), &minHashes, newDocID); 
+  superHash newSuperHash( md5.digestMemory(&superHashAr[0], sizeof(superHashAr)), &minHashes, newDocID); 
+  return newSuperHash;
+//*/
 }
 
 // Given a unsigned short number, return it in string.
@@ -880,8 +1090,25 @@ vector<uint> createDoc(const uint minDocSz,
   return doc;
 }
 
+// Random generator function by Torsten.
+uint randInRangeMS(const uint min, const uint max, int* seed) {
+  assert(min<max);
+  assert(min>=0);
+  int lo;
+  int hi;
+  int test;
+
+  hi=(*seed)/127773;
+  lo=(*seed) % 127773;
+  test=16807*lo-2836*hi;
+  if (test>0) *seed=test;
+  else *seed=test+2147483647;
+  return (min + (uint)((max-min+1)*((double)(*seed)/(double)2147483647))) ;  
+}
+
 // Given the minimum and the maximum unsigned integer, return an integer at random in the given range.
 uint randInRange(const uint min, const uint max) {
+  if (min == max) return min;
   assert(min<max);
   assert(min>=0);
   return (min + (rand()%(max-min + 1)));
@@ -964,6 +1191,7 @@ void keepPrimesMoreThan(const uint primeMIN, vector<uint>& primes) {
 
 // Given a parameter k and a vector of unsigned ints, permute them and return k of them.
 void randomlySelectKNumbers(const uint k, vector<uint>&primes) {
+  assert(primes.size() >= k);
   random_shuffle(primes.begin(), primes.end());
   primes.resize(k);
 }
@@ -1008,7 +1236,8 @@ vector<uint> randomlySelectKNumbersUpTo(const uint k, const uint max) {
 void selectKRandom(vector<uint>& randNodes, int numElementsToSample) {
   uint randNumber = 0;
   for (int i = 0; i < numElementsToSample; ++i) {
-    randNumber = randInRange(i, randNodes.size());
+    randNumber = randInRange(i, randNodes.size()); // OLD rand() generator.
+    //randNumber = randInRangeMS(i, randNodes.size(), &seed); // New pseudorandom generator.
     uint tmp = randNodes[ randNumber ];
     randNodes[ randNumber ] = randNodes[ i ];
     randNodes[ i ] = tmp;

@@ -47,7 +47,7 @@ int main() {
   // createSuperhashTemplatesGivenSetup(100, "superHashTemplates_");
 
   // 5. Generate signatures for documents.
-  vector<minHash> minHashDS = createMinHashesForKDocs(100000, hashFuncs);
+  vector<minHash> minHashDS = createMinHashesForKDocs(300000, hashFuncs);
 
   // 6. Create sparseGraph by constructing superHashes and adding edges of similar pairs.
   Graph sparseGraph = createSparseGraph(minHashDS, 0);
